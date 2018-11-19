@@ -8,6 +8,8 @@ import numpy as np
 from sklearn.metrics import f1_score
 from io import BytesIO
 from tensorflow.python.lib.io import file_io
+import datalab.storage as gcs
+
 
 
 
@@ -18,12 +20,11 @@ flags = tf.app.flags
 FLAGS = flags.FLAGS
 flags.DEFINE_string('data_dir', 'data', 'Input Directory.')
 flags.DEFINE_string('output_dir', 'output', 'Output Directory.')
-flags.DEFINE_string('experiment_name', 'conditional_model_1_clipping',
+flags.DEFINE_string('experiment_name', 'CNN_model',
                     'Experiment Name.')
 
-
 class Model(object):
-    def __init__(self, is_training=True):
+    def __init__(self, is_training=True, max_size=10100):
         # define args here for now
         #model variables to be accessed from trianing
         # accessible variables for training:
@@ -33,9 +34,10 @@ class Model(object):
         self.loss = None
         self.acc_op = None
         self.summary_ops = None
-        self.dropout = 0.25
+        self.dropout = 0.5
         self.is_training = None
         self.pred_classes = None
+        self.max_size = max_size
 
 
     def build_model(self):
@@ -45,7 +47,7 @@ class Model(object):
             self.is_training = tf.placeholder(tf.bool,
                                 name='input')
             self.x = tf.placeholder(tf.float32,
-                               shape=[None, 18154],
+                               shape=[None, self.max_size],
                                name='input')
             new_x = tf.expand_dims(self.x, -1)
             self.y = tf.placeholder(tf.float32,
@@ -53,45 +55,51 @@ class Model(object):
                                     name='target')
             print(self.y)
         with tf.name_scope('model'):
-            conv1 = tf.layers.conv1d(new_x, 128, 5, activation=tf.nn.relu)
-            conv1 = tf.layers.max_pooling1d(conv1, 2, 2)
+            conv1 = tf.layers.conv1d(new_x, 128, 55, activation=tf.nn.relu)
+            conv1 = tf.layers.max_pooling1d(conv1, 10, 10)
             conv1 = tf.layers.dropout(conv1, rate=self.dropout, training=self.is_training)
 
-            conv2 = tf.layers.conv1d(conv1, 128, 5, activation=tf.nn.relu)
-            conv2 = tf.layers.max_pooling1d(conv2, 2, 2)
+            conv2 = tf.layers.conv1d(conv1, 128, 25, activation=tf.nn.relu)
+            conv2 = tf.layers.max_pooling1d(conv2, 5, 5)
             conv2 = tf.layers.dropout(conv2, rate=self.dropout, training=self.is_training)
 
-            conv3 = tf.layers.conv1d(conv2, 128, 5, activation=tf.nn.relu)
-            conv3 = tf.layers.max_pooling1d(conv3, 2, 2)
+            conv3 = tf.layers.conv1d(conv2, 128, 10, activation=tf.nn.relu)
+            conv3 = tf.layers.max_pooling1d(conv3, 5, 5)
             conv3 = tf.layers.dropout(conv3, rate=self.dropout, training=self.is_training)
             
             
             conv4 = tf.layers.conv1d(conv3, 128, 5, activation=tf.nn.relu)
-            conv4 = tf.layers.max_pooling1d(conv4, 2, 2)
-            conv4 = tf.layers.dropout(conv4, rate=self.dropout, training=self.is_training)
-            
-            conv5 = tf.layers.conv1d(conv4, 128, 5, activation=tf.nn.relu)
-            conv5 = tf.layers.max_pooling1d(conv5, 2, 2)
-            conv5 = tf.layers.dropout(conv5, rate=self.dropout, training=self.is_training)
-            
-            conv6 = tf.layers.conv1d(conv5, 128, 5, activation=tf.nn.relu)
-            conv6 = tf.layers.max_pooling1d(conv6, 2, 2)
-            
-            
-            conv6 = tf.layers.average_pooling1d(conv6, 2, 2)
-            
-            fc1 = tf.contrib.layers.flatten(conv6)
+            conv4 = tf.layers.max_pooling1d(conv4, 5, 5)
+            #print("Hola", conv4)
+            # conv4 = tf.reduce_mean(conv4, axis=[1,2])
+            # print(conv4)
 
-            fc1 = tf.layers.dense(fc1, 256)
+            # conv4 = tf.layers.max_pooling1d(conv4, 5, 5)
+            # conv4 = tf.layers.dropout(conv4, rate=self.dropout, training=self.is_training)
+            
+            # conv5 = tf.layers.conv1d(conv4, 128, 5, activation=tf.nn.relu)
+            # conv5 = tf.layers.max_pooling1d(conv5, 2, 2)
+            # conv5 = tf.layers.dropout(conv5, rate=self.dropout, training=self.is_training)
+            
+            # conv6 = tf.layers.conv1d(conv5, 128, 5, activation=tf.nn.relu)
+            # conv6 = tf.layers.max_pooling1d(conv6, 2, 2)
+            
+            
+            # conv6 = tf.layers.average_pooling1d(conv6, 2, 2)
+            
+            fc1 = tf.contrib.layers.flatten(conv4)
+
+            fc1 = tf.layers.dense(fc1, 256, activation=tf.nn.relu)
             fc1 = tf.layers.dropout(fc1, rate=self.dropout, training=self.is_training)
             
-            fc2 = tf.layers.dense(fc1, 128)
+            fc2 = tf.layers.dense(fc1, 128, activation=tf.nn.relu)
             fc2 = tf.layers.dropout(fc2, rate=self.dropout, training=self.is_training)
             
-            fc3 = tf.layers.dense(fc2, 64)
+            fc3 = tf.layers.dense(fc2, 64, activation=tf.nn.relu)
             fc3 = tf.layers.dropout(fc3, rate=self.dropout, training=self.is_training)
 
             out = tf.layers.dense(fc3, 4)
+            print("out", out)
             self.pred_classes = tf.argmax(out, axis=1)
             pred_probas = tf.nn.softmax(out)
 
@@ -132,21 +140,51 @@ class TrainModel(object):
         test_input = test_input.sort_values(by=['id'])
         test_input = test_input.drop(columns=['id'])
 
-        # test_input.apply(lambda x: x.loc[x.last_valid_index():] = x.loc[x.last_valid_index() - (9000 - x.last_valid_index() - 1):x.last_valid_index() + 1], axis=1)
-        train_input = train_input.interpolate(method='linear', axis=1)
-        test_input = test_input.interpolate(method='linear', axis=1)
-
+        self.max_size = 10100
+        new_data = np.zeros((len(train_input), self.max_size))
+        for i in range(0, len(train_input)):
+            row = train_input.loc[i]
+            index = train_input.columns.get_loc(row.last_valid_index())
+            dummy = np.array(row[:index+1])
+            if (self.max_size - len(dummy)) <= 0:
+                new_data[i, :] = dummy[0:self.max_size]
+            else:
+                b = dummy[0:(self.max_size - len(dummy))]
+                goal = np.hstack((dummy, b))
+                while len(goal) != self.max_size:
+                    b = dummy[0:(self.max_size - len(goal))]
+                    goal = np.hstack((goal, b))
+                new_data[i, :] = goal
+        train_input = new_data
+        new_data = np.zeros((len(test_input), self.max_size))
+        for i in range(0, len(test_input)):
+            row = test_input.loc[i]
+            index = test_input.columns.get_loc(row.last_valid_index())
+            dummy = np.array(row[:index+1])
+            if (self.max_size - len(dummy)) <= 0:
+                new_data[i, :] = dummy[0:self.max_size]
+            else:
+                b = dummy[0:(self.max_size - len(dummy))]
+                goal = np.hstack((dummy, b))
+                while len(goal) != self.max_size:
+                    b = dummy[0:(self.max_size - len(goal))]
+                    goal = np.hstack((goal, b))
+                new_data[i, :] = goal
+        test_input = new_data
         train_output = train_output.squeeze()
+        train_input = (train_input - train_input.mean())/(train_input.std()) #Some normalization here
+        test_input = (test_input - test_input.mean())/(test_input.std()) #Some normalization here
         X_train, X_test, self.y_train, self.y_test = train_test_split(train_input, train_output, test_size=0.2)
-        scaler = StandardScaler()
-        scaler.fit(X_train)
-        self.X_train = np.array(scaler.transform(X_train))
-        self.X_test = np.array(scaler.transform(X_test))
-        self.test_input = np.array(scaler.transform(test_input))
+        # scaler = StandardScaler()
+        # scaler.fit(X_train)
+        self.X_train = np.array(X_train)
+        self.X_test = np.array(X_test)
+        self.test_input = np.array(test_input)
         self.y_train = np.array(self.y_train)
         self.y_test = np.array(self.y_test)
         #params
-        self.epochs = 200
+        self.epochs = 500
+        print(np.shape(self.X_train))
 
     def shuffle_batches(self, inputs, targets, batchsize):
         indices = np.arange(len(inputs))
@@ -161,8 +199,8 @@ class TrainModel(object):
             yield inputs[batch], batch_targets
 
     def train(self):
-        self.train_model = Model() # to be changed
-        batchsize = 64
+        self.train_model = Model(self.max_size) # to be changed
+        batchsize = 275
         self.train_model.build_model()
         saver = tf.train.Saver(max_to_keep=10)
         summary_proto = tf.Summary()
@@ -212,14 +250,18 @@ class TrainModel(object):
                 print('Epoch ', epoch, ' got score of  ', test_acc)
 
                 #FINAL TESTINg
-            testing_feed = {self.train_model.x: self.test_input,
-                               self.train_model.is_training: False}
-            [predicted_classes] = sess.run([self.train_model.pred_classes],
-                                                      feed_dict=testing_feed)
-            test_input_pred = predicted_classes + 1
-            predicted_output = {'y': test_input_pred}
-            predicted_output_df = pd.DataFrame(data=predicted_output)
-            predicted_output_df.to_csv(os.path.join(FLAGS.output_dir, 'y_test.csv'), index_label='id')
+                testing_feed = {self.train_model.x: self.test_input,
+                                self.train_model.is_training: False}
+                [predicted_classes] = sess.run([self.train_model.pred_classes],
+                                                        feed_dict=testing_feed)
+                test_input_pred = predicted_classes
+                predicted_output = {'y': test_input_pred}
+                predicted_output_df = pd.DataFrame(data=predicted_output)
+                #predicted_output_df.set_index('id')
+                if epoch % 5 == 0:
+                    print('Epoch ', epoch, ' saved a new estimated file')
+                    gcs.Bucket('aml-project3').item('output/data.csv').write_to(predicted_output_df.to_csv(index_label='id'),'text/csv')
+                #predicted_output_df.to_csv(os.path.join(FLAGS.output_dir, 'y_test.csv'), index_label='id')
 
 
 def main(_):

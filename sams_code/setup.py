@@ -1,6 +1,6 @@
 from setuptools import find_packages
 from setuptools import setup
-REQUIRED_PACKAGES = ['numpy==1.14.5', 'matplotlib', 'pandas==0.23.4', 'tensorflow==1.8.0']
+REQUIRED_PACKAGES = ['numpy==1.14.5', 'matplotlib', 'pandas==0.23.4', 'tensorflow==1.8.0', 'datalab', 'keras==2.2.4']
 setup(
     name='trainer',
     version='0.1',
